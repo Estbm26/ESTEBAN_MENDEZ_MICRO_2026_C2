@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        main.c
+        state_machine.c
+        mqtt_manager.c
+        motor.c
+        encoder.c
+        display.c
+        io.c
+        config.c
+    INCLUDE_DIRS
+        include
+    REQUIRES
+        esp_mqtt
+        cjson
+        driver
+        esp_timer
+        nvs_flash
+)

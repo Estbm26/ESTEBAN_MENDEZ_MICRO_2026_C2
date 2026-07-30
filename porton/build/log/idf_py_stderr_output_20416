@@ -1,0 +1,11 @@
+Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Espressif\tools\python\v5.5.4\venv\Scripts\python.exe -DESP_PLATFORM=1 -DCCACHE_ENABLE=1 C:\Users\estme\Desktop\9no Cuatrimestre\Microcontroladores\porton
+CMake Error at C:/esp/v5.5.4/esp-idf/tools/cmake/build.cmake:330 (message):
+  Failed to resolve component 'esp_mqtt' required by component 'main':
+  unknown name.
+Call Stack (most recent call first):
+  C:/esp/v5.5.4/esp-idf/tools/cmake/build.cmake:373 (__build_resolve_and_add_req)
+  C:/esp/v5.5.4/esp-idf/tools/cmake/build.cmake:687 (__build_expand_requirements)
+  C:/esp/v5.5.4/esp-idf/tools/cmake/project.cmake:752 (idf_build_process)
+  CMakeLists.txt:3 (project)
+
+
