@@ -1,8 +1,4 @@
-/*
-* SPDX-FileCopyrightText: 2022-2023 Espressif Systems (Shanghai) CO LTD
-*
-* SPDX-License-Identifier: Apache-2.0
-*/
+
 
 #include <stdio.h>
 #include <stdint.h>
@@ -84,10 +80,16 @@ int timerId  = 1;
 static bool          timer_iniciado = 0;
 static volatile bool timer_expirado = 0;
 
+/* ---------- Inicialización ---------- */
+static bool init_realizado = false;
+TickType_t init_inicio = 0;
+
 esp_mqtt_client_handle_t mqtt_client = NULL;
 /* ---------- Simulación de Limit Switch por MQTT ---------- */
 uint8_t mqtt_fca = 0;    // Limit Switch Abierto
 uint8_t mqtt_fcc = 0;    // Limit Switch Cerrado
+uint8_t mqtt_ftc = 0;    // Fotocelda
+
 /* ── MQTT ─────────────────────────────────────────────────────────────── */
 
 static void log_error_if_nonzero(const char *message, int error_code)
@@ -117,6 +119,9 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
     esp_mqtt_client_subscribe(client, "/garage/sensor/LMAb", 1);
     ESP_LOGI(TAG, "Suscrito a /garage/sensor/LMAb");
 
+    esp_mqtt_client_subscribe(client, "/garage/sensor/FTC", 1);
+    ESP_LOGI(TAG, "Suscrito a /garage/sensor/FTC");
+
     break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -143,18 +148,26 @@ case MQTT_EVENT_DATA:
 
     /*------------ COMANDOS ------------*/
 
-    if (strcmp(topic, "/garage/comando") == 0)
+  if (strcmp(topic, "/garage/comando") == 0)
+{
+    if (strcmp(data, "abrir") == 0)
     {
-        if (strcmp(data, "abrir") == 0)
-            Estado_Siguiente = Estado_Abriendo;
-
-        else if (strcmp(data, "cerrar") == 0)
-            Estado_Siguiente = Estado_Cerrando;
-
-        else if (strcmp(data, "stop") == 0)
-            Estado_Siguiente = Estado_Stop;
+        Estado_Siguiente = Estado_Abriendo;
     }
-
+    else if (strcmp(data, "cerrar") == 0)
+    {
+        Estado_Siguiente = Estado_Cerrando;
+    }
+    else if (strcmp(data, "stop") == 0)
+    {
+        Estado_Siguiente = Estado_Stop;
+    }
+    else if (strcmp(data, "reset") == 0)
+    {
+        Estado_Siguiente = Estado_Inicio;
+        init_realizado = false;
+    }
+}
     /*------ LIMIT SWITCH CERRADO ------*/
 
     else if (strcmp(topic, "/garage/sensor/LMCe") == 0)
@@ -172,6 +185,13 @@ case MQTT_EVENT_DATA:
 
         ESP_LOGI(TAG, "LMAb MQTT = %d", mqtt_fca);
     }
+
+    else if (strcmp(topic, "/garage/sensor/FTC") == 0)
+    {
+    mqtt_ftc = atoi(data);
+
+    ESP_LOGI(TAG, "FTC MQTT = %d", mqtt_ftc);
+}
 
     break;
 }
@@ -248,13 +268,37 @@ int Func_Estado_Inicio(void)
     io.lamp   = Lamp_OFF;
     io.buzzer = Buzzer_OFF;
 
-    if (io.fca)
-        Estado_Siguiente = Estado_Abierto;
-    else if (io.fcc)
-        Estado_Siguiente = Estado_Cerrado;
+    // Solo se ejecuta una vez al entrar al estado
+    if (!init_realizado)
+    {
+        init_inicio = xTaskGetTickCount();
+        init_realizado = true;
+    }
 
-    esp_mqtt_client_publish(mqtt_client, "/garage/estado", "Inicio", 0, 1, 0);
-    printf("Estado actual:Inicio\n");
+    // Espera 3 segundos
+    if ((xTaskGetTickCount() - init_inicio) >= pdMS_TO_TICKS(3000))
+    {
+        if (io.fcc)
+        {
+            Estado_Siguiente = Estado_Cerrado;
+        }
+        else if (io.fca)
+        {
+            Estado_Siguiente = Estado_Abierto;
+        }
+
+        init_realizado = false;
+    }
+
+    esp_mqtt_client_publish(mqtt_client,
+                            "/garage/estado",
+                            "Inicio",
+                            0,
+                            1,
+                            0);
+
+    printf("Estado actual: Inicio\n");
+
     return 0;
 }
 
@@ -314,16 +358,23 @@ int Func_Estado_Cerrando(void)
     io.enable = Enable_ON;
     io.lamp   = Lamp_ON;
 
-    if (io.fcc)
-    {
-        Estado_Siguiente = Estado_Cerrado;
-        recuperando      = 0;
-    }
-    else if (io.ba)
-        Estado_Siguiente = Estado_Abriendo;
-    else if (io.bs)
-        Estado_Siguiente = Estado_Stop;
-
+  if (io.fcc)
+{
+    Estado_Siguiente = Estado_Cerrado;
+    recuperando      = 0;
+}
+else if (io.ftc)
+{
+    Estado_Siguiente = Estado_Stop;
+}
+else if (io.ba)
+{
+    Estado_Siguiente = Estado_Abriendo;
+}
+else if (io.bs)
+{
+    Estado_Siguiente = Estado_Stop;
+}
     esp_mqtt_client_publish(mqtt_client, "/garage/estado", "Cerrando", 0, 1, 0);
     printf("Estado actual:Cerrando\n");
     return 0;
@@ -410,8 +461,8 @@ void app_main(void)
 
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid     = "CLAROR84KU",
-            .password = "48575443C1B857B5",
+            .ssid     = "Docentes_Administrativos",
+            .password = "Adm1N2584km",
         },
     };
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
@@ -450,16 +501,25 @@ void app_main(void)
 
         io.fca = gpio_get_level(fca_pin) || mqtt_fca;
         io.fcc = gpio_get_level(fcc_pin) || mqtt_fcc;
-        io.ftc = gpio_get_level(ftc_pin);
+        io.ftc = gpio_get_level(ftc_pin) || mqtt_ftc;
         io.bc  = gpio_get_level(bc_pin);
         io.ba  = gpio_get_level(ba_pin);
         io.bs  = gpio_get_level(bs_pin);
         io.be  = gpio_get_level(be_pin);
 
         Estado_Actual = Estado_Siguiente;
+        
 
-        if (io.fca && io.fcc && !recuperando)
-            Estado_Siguiente = Estado_Error;
+/*------------- RESET -------------*/
+if (io.be)
+{
+    Estado_Siguiente = Estado_Inicio;
+    init_realizado = false;
+}
+
+/*------------- ERROR -------------*/
+if (io.fca && io.fcc && !recuperando)
+    Estado_Siguiente = Estado_Error;
 
         switch (Estado_Actual)
         {
